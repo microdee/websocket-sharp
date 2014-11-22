@@ -307,6 +307,9 @@ namespace WebSocketSharp.Server
           host.Start ();
 
         _hosts.Add (path, host);
+        ServiceAddedEventArgs saea = new ServiceAddedEventArgs();
+        saea.Path = path;
+        this.ServiceAdded(this, saea);
       }
     }
 
@@ -603,5 +606,16 @@ namespace WebSocketSharp.Server
     }
 
     #endregion
+
+    #region Public Events
+    /// <summary>
+    /// Occurs when a service is added.
+    /// </summary>
+    public event EventHandler<ServiceAddedEventArgs> ServiceAdded;
+    #endregion Public Events
+  }
+  public class ServiceAddedEventArgs : EventArgs
+  {
+      public string Path = "";
   }
 }
