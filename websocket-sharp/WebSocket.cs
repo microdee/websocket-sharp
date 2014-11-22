@@ -1199,9 +1199,10 @@ namespace WebSocketSharp
             var sent = sender.EndInvoke (ar);
             if (completed != null)
               completed (sent);
-              SentMessageEventArgs smea = new SentMessageEventArgs();
-              smea.GUID = MessageIdentifier;
-              OnAsyncMessageSent(this, smea);
+            SentMessageEventArgs smea = new SentMessageEventArgs();
+            smea.GUID = MessageIdentifier;
+            smea.Sent = sent;
+            OnAsyncMessageSent(this, smea);
           }
           catch (Exception ex) {
             _logger.Fatal (ex.ToString ());
@@ -2165,12 +2166,11 @@ namespace WebSocketSharp
 
           var sent = send (Opcode.Binary, new MemoryStream (data));
           if (completed != null)
-          {
               completed(sent);
-              SentMessageEventArgs smea = new SentMessageEventArgs();
-              smea.GUID = MessageIdentifier;
-              OnAsyncMessageSent(this, smea);
-          }
+          SentMessageEventArgs smea = new SentMessageEventArgs();
+          smea.GUID = MessageIdentifier;
+          smea.Sent = sent;
+          OnAsyncMessageSent(this, smea);
         },
         ex => {
           _logger.Fatal (ex.ToString ());
@@ -2336,5 +2336,6 @@ namespace WebSocketSharp
     public class SentMessageEventArgs : EventArgs
     {
         public Guid GUID;
+        public bool Sent;
     }
 }
