@@ -1190,7 +1190,7 @@ namespace WebSocketSharp
     private Guid sendAsync (Opcode opcode, Stream stream, Action<bool> completed)
     {
       Func<Opcode, Stream, bool> sender = send;
-      Guid MessageIdentifier = new Guid();
+      Guid MessageIdentifier = Guid.NewGuid();
       sender.BeginInvoke (
         opcode,
         stream,
@@ -2134,7 +2134,7 @@ namespace WebSocketSharp
     /// </param>
     public Guid SendAsync(Stream stream, int length, Action<bool> completed)
     {
-      Guid MessageIdentifier = new Guid();
+      Guid MessageIdentifier = Guid.NewGuid();
       var msg = _readyState.CheckIfOpen () ??
                 stream.CheckIfCanRead () ??
                 (length < 1 ? "'length' is less than 1." : null);
