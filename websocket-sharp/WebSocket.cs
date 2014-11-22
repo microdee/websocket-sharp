@@ -522,6 +522,11 @@ namespace WebSocketSharp
     /// </summary>
     public event EventHandler OnOpen;
 
+    /// <summary>
+    /// Occurs when sending a message asynchronously is done.
+    /// </summary>
+    public event EventHandler<SentMessageEventArgs> OnAsyncMessageSent;
+
     #endregion
 
     #region Private Methods
@@ -1182,9 +1187,10 @@ namespace WebSocketSharp
       }
     }
 
-    private void sendAsync (Opcode opcode, Stream stream, Action<bool> completed)
+    private Guid sendAsync (Opcode opcode, Stream stream, Action<bool> completed)
     {
       Func<Opcode, Stream, bool> sender = send;
+      Guid MessageIdentifier = new Guid();
       sender.BeginInvoke (
         opcode,
         stream,
@@ -1193,6 +1199,9 @@ namespace WebSocketSharp
             var sent = sender.EndInvoke (ar);
             if (completed != null)
               completed (sent);
+              SentMessageEventArgs smea = new SentMessageEventArgs();
+              smea.GUID = MessageIdentifier;
+              OnAsyncMessageSent(this, smea);
           }
           catch (Exception ex) {
             _logger.Fatal (ex.ToString ());
@@ -1200,6 +1209,7 @@ namespace WebSocketSharp
           }
         },
         null);
+      return MessageIdentifier;
     }
 
     private bool sendBytes (byte[] bytes)
@@ -2011,6 +2021,9 @@ namespace WebSocketSharp
     /// <summary>
     /// Sends a binary <paramref name="data"/> asynchronously using the WebSocket connection.
     /// </summary>
+    /// <returns>
+    /// A unique message identifier which you can use while processing your sent messages.
+    /// </returns>
     /// <remarks>
     /// This method doesn't wait for the send to be complete.
     /// </remarks>
@@ -2022,23 +2035,27 @@ namespace WebSocketSharp
     /// the send is complete. A <see cref="bool"/> passed to this delegate is <c>true</c>
     /// if the send is complete successfully.
     /// </param>
-    public void SendAsync (byte[] data, Action<bool> completed)
+    public Guid SendAsync (byte[] data, Action<bool> completed)
     {
       var msg = _readyState.CheckIfOpen () ?? data.CheckIfValidSendData ();
       if (msg != null) {
         _logger.Error (msg);
         error ("An error has occurred in sending the data.", null);
 
-        return;
+        return Guid.Empty;
       }
 
-      sendAsync (Opcode.Binary, new MemoryStream (data), completed);
+      return sendAsync (Opcode.Binary, new MemoryStream (data), completed);
     }
+
 
     /// <summary>
     /// Sends the specified <paramref name="file"/> as a binary data asynchronously
     /// using the WebSocket connection.
     /// </summary>
+    /// <returns>
+    /// A unique message identifier which you can use while processing your sent messages.
+    /// </returns>
     /// <remarks>
     /// This method doesn't wait for the send to be complete.
     /// </remarks>
@@ -2050,22 +2067,25 @@ namespace WebSocketSharp
     /// the send is complete. A <see cref="bool"/> passed to this delegate is <c>true</c>
     /// if the send is complete successfully.
     /// </param>
-    public void SendAsync (FileInfo file, Action<bool> completed)
+    public Guid SendAsync (FileInfo file, Action<bool> completed)
     {
       var msg = _readyState.CheckIfOpen () ?? file.CheckIfValidSendData ();
       if (msg != null) {
         _logger.Error (msg);
         error ("An error has occurred in sending the data.", null);
 
-        return;
+        return Guid.Empty;
       }
 
-      sendAsync (Opcode.Binary, file.OpenRead (), completed);
+      return sendAsync (Opcode.Binary, file.OpenRead (), completed);
     }
 
     /// <summary>
     /// Sends a text <paramref name="data"/> asynchronously using the WebSocket connection.
     /// </summary>
+    /// <returns>
+    /// A unique message identifier which you can use while processing your sent messages.
+    /// </returns>
     /// <remarks>
     /// This method doesn't wait for the send to be complete.
     /// </remarks>
@@ -2077,23 +2097,26 @@ namespace WebSocketSharp
     /// the send is complete. A <see cref="bool"/> passed to this delegate is <c>true</c>
     /// if the send is complete successfully.
     /// </param>
-    public void SendAsync (string data, Action<bool> completed)
+    public Guid SendAsync (string data, Action<bool> completed)
     {
       var msg = _readyState.CheckIfOpen () ?? data.CheckIfValidSendData ();
       if (msg != null) {
         _logger.Error (msg);
         error ("An error has occurred in sending the data.", null);
 
-        return;
+        return Guid.Empty;
       }
 
-      sendAsync (Opcode.Text, new MemoryStream (Encoding.UTF8.GetBytes (data)), completed);
+      return sendAsync (Opcode.Text, new MemoryStream (Encoding.UTF8.GetBytes (data)), completed);
     }
 
     /// <summary>
     /// Sends a binary data from the specified <see cref="Stream"/> asynchronously
     /// using the WebSocket connection.
     /// </summary>
+    /// <returns>
+    /// A unique message identifier which you can use while processing your sent messages.
+    /// </returns>
     /// <remarks>
     /// This method doesn't wait for the send to be complete.
     /// </remarks>
@@ -2108,8 +2131,9 @@ namespace WebSocketSharp
     /// the send is complete. A <see cref="bool"/> passed to this delegate is <c>true</c>
     /// if the send is complete successfully.
     /// </param>
-    public void SendAsync (Stream stream, int length, Action<bool> completed)
+    public Guid SendAsync(Stream stream, int length, Action<bool> completed)
     {
+      Guid MessageIdentifier = new Guid();
       var msg = _readyState.CheckIfOpen () ??
                 stream.CheckIfCanRead () ??
                 (length < 1 ? "'length' is less than 1." : null);
@@ -2118,7 +2142,7 @@ namespace WebSocketSharp
         _logger.Error (msg);
         error ("An error has occurred in sending the data.", null);
 
-        return;
+        return Guid.Empty;
       }
 
       stream.ReadBytesAsync (
@@ -2141,12 +2165,18 @@ namespace WebSocketSharp
 
           var sent = send (Opcode.Binary, new MemoryStream (data));
           if (completed != null)
-            completed (sent);
+          {
+              completed(sent);
+              SentMessageEventArgs smea = new SentMessageEventArgs();
+              smea.GUID = MessageIdentifier;
+              OnAsyncMessageSent(this, smea);
+          }
         },
         ex => {
           _logger.Fatal (ex.ToString ());
           error ("An exception has occurred while sending the data.", ex);
         });
+      return MessageIdentifier;
     }
 
     /// <summary>
@@ -2303,4 +2333,8 @@ namespace WebSocketSharp
 
     #endregion
   }
+    public class SentMessageEventArgs : EventArgs
+    {
+        public Guid GUID;
+    }
 }
