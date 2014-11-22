@@ -314,7 +314,10 @@ namespace WebSocketSharp.Server
 
         var id = createID ();
         _sessions.Add (id, session);
-
+        ClientConnectEventArgs ccea = new ClientConnectEventArgs();
+        ccea.ID = id;
+        ccea.Session = session;
+        this.OnConnectedClient(this, ccea);
         return id;
       }
     }
@@ -356,8 +359,13 @@ namespace WebSocketSharp.Server
 
     internal bool Remove (string id)
     {
-      lock (_sync)
-        return _sessions.Remove (id);
+        lock (_sync)
+        {
+            ClientCloseEventArgs ccea = new ClientCloseEventArgs();
+            ccea.ID = id;
+            this.OnClosedClient(this, ccea);
+            return _sessions.Remove(id);
+        }
     }
 
     internal void Start ()
@@ -844,6 +852,25 @@ namespace WebSocketSharp.Server
       return tryGetSession (id, out session);
     }
 
+    /// <summary>
+    /// Occurs when a client is connected.
+    /// </summary>
+    public event EventHandler<ClientConnectEventArgs> OnConnectedClient;
+
+    /// <summary>
+    /// Occurs when a client is disconnected.
+    /// </summary>
+    public event EventHandler<ClientCloseEventArgs> OnClosedClient;
+
     #endregion
   }
+    public class ClientConnectEventArgs : EventArgs
+    {
+        public string ID;
+        public IWebSocketSession Session;
+    }
+    public class ClientCloseEventArgs : EventArgs
+    {
+        public string ID;
+    }
 }
