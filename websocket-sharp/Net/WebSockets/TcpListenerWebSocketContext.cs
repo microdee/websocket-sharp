@@ -4,7 +4,7 @@
  *
  * The MIT License
  *
- * Copyright (c) 2012-2014 sta.blockhead
+ * Copyright (c) 2012-2015 sta.blockhead
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -54,6 +54,7 @@ namespace WebSocketSharp.Net.WebSockets
     #region Private Fields
 
     private CookieCollection    _cookies;
+    private Logger              _logger;
     private NameValueCollection _queryString;
     private HttpRequest         _request;
     private bool                _secure;
@@ -76,6 +77,7 @@ namespace WebSocketSharp.Net.WebSockets
     {
       _tcpClient = tcpClient;
       _secure = secure;
+      _logger = logger;
 
       var netStream = tcpClient.GetStream ();
       if (secure) {
@@ -98,12 +100,24 @@ namespace WebSocketSharp.Net.WebSockets
       _uri = HttpUtility.CreateRequestUrl (
         _request.RequestUri, _request.Headers["Host"], _request.IsWebSocketRequest, secure);
 
-      _websocket = new WebSocket (this, protocol, logger);
+      _websocket = new WebSocket (this, protocol);
     }
 
     #endregion
 
     #region Internal Properties
+
+    internal string HttpMethod {
+      get {
+        return _request.HttpMethod;
+      }
+    }
+
+    internal Logger Log {
+      get {
+        return _logger;
+      }
+    }
 
     internal Stream Stream {
       get {
@@ -159,7 +173,7 @@ namespace WebSocketSharp.Net.WebSockets
     /// </value>
     public override bool IsAuthenticated {
       get {
-        return _user != null && _user.Identity.IsAuthenticated;
+        return _user != null;
       }
     }
 
@@ -304,7 +318,7 @@ namespace WebSocketSharp.Net.WebSockets
     /// Gets the client information (identity, authentication, and security roles).
     /// </summary>
     /// <value>
-    /// A <see cref="IPrincipal"/> that represents the client information.
+    /// A <see cref="IPrincipal"/> instance that represents the client information.
     /// </value>
     public override IPrincipal User {
       get {
@@ -359,38 +373,9 @@ namespace WebSocketSharp.Net.WebSockets
       _request = HttpRequest.Read (_stream, 15000);
     }
 
-    internal void SetUser (
-      AuthenticationSchemes scheme,
-      string realm,
-      Func<IIdentity, NetworkCredential> credentialsFinder)
+    internal void SetUser (IPrincipal value)
     {
-      var authRes = _request.AuthenticationResponse;
-      if (authRes == null)
-        return;
-
-      var id = authRes.ToIdentity ();
-      if (id == null)
-        return;
-
-      NetworkCredential cred = null;
-      try {
-        cred = credentialsFinder (id);
-      }
-      catch {
-      }
-
-      if (cred == null)
-        return;
-
-      var valid = scheme == AuthenticationSchemes.Basic
-                  ? ((HttpBasicIdentity) id).Password == cred.Password
-                  : scheme == AuthenticationSchemes.Digest
-                    ? ((HttpDigestIdentity) id).IsValid (
-                        cred.Password, realm, _request.HttpMethod, null)
-                    : false;
-
-      if (valid)
-        _user = new GenericPrincipal (id, cred.Roles);
+      _user = value;
     }
 
     #endregion

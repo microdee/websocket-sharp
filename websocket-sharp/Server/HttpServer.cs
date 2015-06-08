@@ -6,7 +6,7 @@
  *
  * The MIT License
  *
- * Copyright (c) 2012-2014 sta.blockhead
+ * Copyright (c) 2012-2015 sta.blockhead
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -61,7 +61,7 @@ namespace WebSocketSharp.Server
     private HttpListener            _listener;
     private Logger                  _logger;
     private int                     _port;
-    private Thread                  _receiveRequestThread;
+    private Thread                  _receiveThread;
     private string                  _rootPath;
     private bool                    _secure;
     private WebSocketServiceManager _services;
@@ -141,7 +141,7 @@ namespace WebSocketSharp.Server
       _port = port;
       _secure = secure;
       _listener = new HttpListener ();
-      _logger = new Logger ();
+      _logger = _listener.Log;
       _services = new WebSocketServiceManager (_logger);
       _state = ServerState.Ready;
       _sync = new object ();
@@ -149,8 +149,8 @@ namespace WebSocketSharp.Server
       var os = Environment.OSVersion;
       _windows = os.Platform != PlatformID.Unix && os.Platform != PlatformID.MacOSX;
 
-      var prefix = String.Format ("http{0}://*:{1}/", _secure ? "s" : "", _port);
-      _listener.Prefixes.Add (prefix);
+      var pref = String.Format ("http{0}://*:{1}/", _secure ? "s" : "", _port);
+      _listener.Prefixes.Add (pref);
     }
 
     #endregion
@@ -503,7 +503,7 @@ namespace WebSocketSharp.Server
              : null;
     }
 
-    private void processHttpRequest (HttpListenerContext context)
+    private void processRequest (HttpListenerContext context)
     {
       var method = context.Request.HttpMethod;
       var evt = method == "GET"
@@ -534,7 +534,7 @@ namespace WebSocketSharp.Server
       context.Response.Close ();
     }
 
-    private void processWebSocketRequest (HttpListenerWebSocketContext context)
+    private void processRequest (HttpListenerWebSocketContext context)
     {
       WebSocketServiceHost host;
       if (!_services.InternalTryGetServiceHost (context.RequestUri.AbsolutePath, out host)) {
@@ -554,11 +554,11 @@ namespace WebSocketSharp.Server
             state => {
               try {
                 if (ctx.Request.IsUpgradeTo ("websocket")) {
-                  processWebSocketRequest (ctx.AcceptWebSocket (null, _logger));
+                  processRequest (ctx.AcceptWebSocket (null));
                   return;
                 }
 
-                processHttpRequest (ctx);
+                processRequest (ctx);
               }
               catch (Exception ex) {
                 _logger.Fatal (ex.ToString ());
@@ -583,15 +583,15 @@ namespace WebSocketSharp.Server
     private void startReceiving ()
     {
       _listener.Start ();
-      _receiveRequestThread = new Thread (new ThreadStart (receiveRequest));
-      _receiveRequestThread.IsBackground = true;
-      _receiveRequestThread.Start ();
+      _receiveThread = new Thread (new ThreadStart (receiveRequest));
+      _receiveThread.IsBackground = true;
+      _receiveThread.Start ();
     }
 
     private void stopReceiving (int millisecondsTimeout)
     {
       _listener.Close ();
-      _receiveRequestThread.Join (millisecondsTimeout);
+      _receiveThread.Join (millisecondsTimeout);
     }
 
     #endregion
@@ -671,12 +671,12 @@ namespace WebSocketSharp.Server
     /// </param>
     public byte[] GetFile (string path)
     {
-      var filePath = RootPath + path;
+      path = RootPath + path;
       if (_windows)
-        filePath = filePath.Replace ("/", "\\");
+        path = path.Replace ("/", "\\");
 
-      return File.Exists (filePath)
-             ? File.ReadAllBytes (filePath)
+      return File.Exists (path)
+             ? File.ReadAllBytes (path)
              : null;
     }
 
@@ -749,20 +749,15 @@ namespace WebSocketSharp.Server
     /// <see cref="string"/> used to stop the WebSocket services.
     /// </summary>
     /// <param name="code">
-    /// A <see cref="ushort"/> that represents the status code indicating the reason for stop.
+    /// A <see cref="ushort"/> that represents the status code indicating the reason for the stop.
     /// </param>
     /// <param name="reason">
-    /// A <see cref="string"/> that represents the reason for stop.
+    /// A <see cref="string"/> that represents the reason for the stop.
     /// </param>
     public void Stop (ushort code, string reason)
     {
-      CloseEventArgs e = null;
       lock (_sync) {
-        var msg =
-          _state.CheckIfStart () ??
-          code.CheckIfValidCloseStatusCode () ??
-          (e = new CloseEventArgs (code, reason)).RawData.CheckIfValidControlData ("reason");
-
+        var msg = _state.CheckIfStart () ?? WebSocket.CheckCloseParameters (code, reason, false);
         if (msg != null) {
           _logger.Error (msg);
           return;
@@ -771,8 +766,13 @@ namespace WebSocketSharp.Server
         _state = ServerState.ShuttingDown;
       }
 
-      var send = !code.IsReserved ();
-      _services.Stop (e, send, send);
+      if (code == (ushort) CloseStatusCode.NoStatus) {
+        _services.Stop (new CloseEventArgs (), true, true);
+      }
+      else {
+        var send = !code.IsReserved ();
+        _services.Stop (new CloseEventArgs (code, reason), send, send);
+      }
 
       stopReceiving (5000);
 
@@ -785,19 +785,15 @@ namespace WebSocketSharp.Server
     /// </summary>
     /// <param name="code">
     /// One of the <see cref="CloseStatusCode"/> enum values, represents the status code
-    /// indicating the reasons for stop.
+    /// indicating the reason for the stop.
     /// </param>
     /// <param name="reason">
-    /// A <see cref="string"/> that represents the reason for stop.
+    /// A <see cref="string"/> that represents the reason for the stop.
     /// </param>
     public void Stop (CloseStatusCode code, string reason)
     {
-      CloseEventArgs e = null;
       lock (_sync) {
-        var msg =
-          _state.CheckIfStart () ??
-          (e = new CloseEventArgs (code, reason)).RawData.CheckIfValidControlData ("reason");
-
+        var msg = _state.CheckIfStart () ?? WebSocket.CheckCloseParameters (code, reason, false);
         if (msg != null) {
           _logger.Error (msg);
           return;
@@ -806,8 +802,13 @@ namespace WebSocketSharp.Server
         _state = ServerState.ShuttingDown;
       }
 
-      var send = !code.IsReserved ();
-      _services.Stop (e, send, send);
+      if (code == CloseStatusCode.NoStatus) {
+        _services.Stop (new CloseEventArgs (), true, true);
+      }
+      else {
+        var send = !code.IsReserved ();
+        _services.Stop (new CloseEventArgs (code, reason), send, send);
+      }
 
       stopReceiving (5000);
 

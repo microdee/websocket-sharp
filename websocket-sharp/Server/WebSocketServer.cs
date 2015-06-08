@@ -6,7 +6,7 @@
  *
  * The MIT License
  *
- * Copyright (c) 2012-2014 sta.blockhead
+ * Copyright (c) 2012-2015 sta.blockhead
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -66,7 +66,7 @@ namespace WebSocketSharp.Server
     private Logger                             _logger;
     private int                                _port;
     private string                             _realm;
-    private Thread                             _receiveRequestThread;
+    private Thread                             _receiveThread;
     private bool                               _reuseAddress;
     private bool                               _secure;
     private WebSocketServiceManager            _services;
@@ -143,6 +143,9 @@ namespace WebSocketSharp.Server
     {
       if (url == null)
         throw new ArgumentNullException ("url");
+
+      if (url.Length == 0)
+        throw new ArgumentException ("An empty string.", "url");
 
       string msg;
       if (!tryCreateUri (url, out _uri, out msg))
@@ -543,13 +546,16 @@ namespace WebSocketSharp.Server
       _state = ServerState.Stop;
     }
 
-    private bool authenticateRequest (
-      AuthenticationSchemes scheme, TcpListenerWebSocketContext context)
+    private static bool authenticate (
+      TcpListenerWebSocketContext context,
+      AuthenticationSchemes scheme,
+      string realm,
+      Func<IIdentity, NetworkCredential> credentialsFinder)
     {
       var chal = scheme == AuthenticationSchemes.Basic
-                 ? AuthenticationChallenge.CreateBasicChallenge (Realm).ToBasicString ()
+                 ? AuthenticationChallenge.CreateBasicChallenge (realm).ToBasicString ()
                  : scheme == AuthenticationSchemes.Digest
-                   ? AuthenticationChallenge.CreateDigestChallenge (Realm).ToDigestString ()
+                   ? AuthenticationChallenge.CreateDigestChallenge (realm).ToDigestString ()
                    : null;
 
       if (chal == null) {
@@ -558,9 +564,6 @@ namespace WebSocketSharp.Server
       }
 
       var retry = -1;
-      var schm = scheme.ToString ();
-      var realm = Realm;
-      var credFinder = UserCredentialsFinder;
       Func<bool> auth = null;
       auth = () => {
         retry++;
@@ -569,19 +572,16 @@ namespace WebSocketSharp.Server
           return false;
         }
 
-        var res = context.Headers["Authorization"];
-        if (res == null || !res.StartsWith (schm, StringComparison.OrdinalIgnoreCase)) {
-          context.SendAuthenticationChallenge (chal);
-          return auth ();
+        var user = HttpUtility.CreateUser (
+          context.Headers["Authorization"], scheme, realm, context.HttpMethod, credentialsFinder);
+
+        if (user != null && user.Identity.IsAuthenticated) {
+          context.SetUser (user);
+          return true;
         }
 
-        context.SetUser (scheme, realm, credFinder);
-        if (!context.IsAuthenticated) {
-          context.SendAuthenticationChallenge (chal);
-          return auth ();
-        }
-
-        return true;
+        context.SendAuthenticationChallenge (chal);
+        return auth ();
       };
 
       return auth ();
@@ -604,7 +604,7 @@ namespace WebSocketSharp.Server
       _sync = new object ();
     }
 
-    private void processWebSocketRequest (TcpListenerWebSocketContext context)
+    private void processRequest (TcpListenerWebSocketContext context)
     {
       var uri = context.RequestUri;
       if (uri == null) {
@@ -642,10 +642,10 @@ namespace WebSocketSharp.Server
               try {
                 var ctx = cl.GetWebSocketContext (null, _secure, _sslConfig, _logger);
                 if (_authSchemes != AuthenticationSchemes.Anonymous &&
-                    !authenticateRequest (_authSchemes, ctx))
+                    !authenticate (ctx, _authSchemes, Realm, UserCredentialsFinder))
                   return;
 
-                processWebSocketRequest (ctx);
+                processRequest (ctx);
               }
               catch (Exception ex) {
                 _logger.Fatal (ex.ToString ());
@@ -674,15 +674,15 @@ namespace WebSocketSharp.Server
           SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
       _listener.Start ();
-      _receiveRequestThread = new Thread (new ThreadStart (receiveRequest));
-      _receiveRequestThread.IsBackground = true;
-      _receiveRequestThread.Start ();
+      _receiveThread = new Thread (new ThreadStart (receiveRequest));
+      _receiveThread.IsBackground = true;
+      _receiveThread.Start ();
     }
 
     private void stopReceiving (int millisecondsTimeout)
     {
       _listener.Stop ();
-      _receiveRequestThread.Join (millisecondsTimeout);
+      _receiveThread.Join (millisecondsTimeout);
     }
 
     private static bool tryCreateUri (string uriString, out Uri result, out string message)
@@ -834,20 +834,15 @@ namespace WebSocketSharp.Server
     /// and <see cref="string"/>.
     /// </summary>
     /// <param name="code">
-    /// A <see cref="ushort"/> that represents the status code indicating the reason for stop.
+    /// A <see cref="ushort"/> that represents the status code indicating the reason for the stop.
     /// </param>
     /// <param name="reason">
-    /// A <see cref="string"/> that represents the reason for stop.
+    /// A <see cref="string"/> that represents the reason for the stop.
     /// </param>
     public void Stop (ushort code, string reason)
     {
-      CloseEventArgs e = null;
       lock (_sync) {
-        var msg =
-          _state.CheckIfStart () ??
-          code.CheckIfValidCloseStatusCode () ??
-          (e = new CloseEventArgs (code, reason)).RawData.CheckIfValidControlData ("reason");
-
+        var msg = _state.CheckIfStart () ?? WebSocket.CheckCloseParameters (code, reason, false);
         if (msg != null) {
           _logger.Error (msg);
           return;
@@ -857,9 +852,13 @@ namespace WebSocketSharp.Server
       }
 
       stopReceiving (5000);
-
-      var send = !code.IsReserved ();
-      _services.Stop (e, send, send);
+      if (code == (ushort) CloseStatusCode.NoStatus) {
+        _services.Stop (new CloseEventArgs (), true, true);
+      }
+      else {
+        var send = !code.IsReserved ();
+        _services.Stop (new CloseEventArgs (code, reason), send, send);
+      }
 
       _state = ServerState.Stop;
     }
@@ -870,19 +869,15 @@ namespace WebSocketSharp.Server
     /// </summary>
     /// <param name="code">
     /// One of the <see cref="CloseStatusCode"/> enum values, represents the status code
-    /// indicating the reason for stop.
+    /// indicating the reason for the stop.
     /// </param>
     /// <param name="reason">
-    /// A <see cref="string"/> that represents the reason for stop.
+    /// A <see cref="string"/> that represents the reason for the stop.
     /// </param>
     public void Stop (CloseStatusCode code, string reason)
     {
-      CloseEventArgs e = null;
       lock (_sync) {
-        var msg =
-          _state.CheckIfStart () ??
-          (e = new CloseEventArgs (code, reason)).RawData.CheckIfValidControlData ("reason");
-
+        var msg = _state.CheckIfStart () ?? WebSocket.CheckCloseParameters (code, reason, false);
         if (msg != null) {
           _logger.Error (msg);
           return;
@@ -892,9 +887,13 @@ namespace WebSocketSharp.Server
       }
 
       stopReceiving (5000);
-
-      var send = !code.IsReserved ();
-      _services.Stop (e, send, send);
+      if (code == CloseStatusCode.NoStatus) {
+        _services.Stop (new CloseEventArgs (), true, true);
+      }
+      else {
+        var send = !code.IsReserved ();
+        _services.Stop (new CloseEventArgs (code, reason), send, send);
+      }
 
       _state = ServerState.Stop;
     }

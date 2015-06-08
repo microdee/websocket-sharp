@@ -37,9 +37,11 @@ namespace Example2
       wssv.AuthenticationSchemes = AuthenticationSchemes.Basic;
       wssv.Realm = "WebSocket Test";
       wssv.UserCredentialsFinder = id => {
-        var expected = "nobita";
-        return id.Name == expected
-               ? new NetworkCredential (expected, "password", "gunfighter")
+        var name = id.Name;
+
+        // Return user name, password, and roles.
+        return name == "nobita"
+               ? new NetworkCredential (name, "password", "gunfighter")
                : null; // If the user credentials aren't found.
       };
        */
@@ -59,6 +61,8 @@ namespace Example2
         "/Chat",
         () => new Chat ("Anon#") {
           Protocol = "chat",
+          // To ignore the Sec-WebSocket-Extensions header.
+          IgnoreExtensions = true,
           // To validate the Origin header.
           OriginValidator = val => {
             // Check the value of the Origin header, and return true if valid.

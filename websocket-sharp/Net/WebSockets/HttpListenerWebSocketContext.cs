@@ -4,7 +4,7 @@
  *
  * The MIT License
  *
- * Copyright (c) 2012-2014 sta.blockhead
+ * Copyright (c) 2012-2015 sta.blockhead
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -49,16 +49,21 @@ namespace WebSocketSharp.Net.WebSockets
 
     #region Internal Constructors
 
-    internal HttpListenerWebSocketContext (
-      HttpListenerContext context, string protocol, Logger logger)
+    internal HttpListenerWebSocketContext (HttpListenerContext context, string protocol)
     {
       _context = context;
-      _websocket = new WebSocket (this, protocol, logger);
+      _websocket = new WebSocket (this, protocol);
     }
 
     #endregion
 
     #region Internal Properties
+
+    internal Logger Log {
+      get {
+        return _context.Listener.Log;
+      }
+    }
 
     internal Stream Stream {
       get {
@@ -114,7 +119,7 @@ namespace WebSocketSharp.Net.WebSockets
     /// </value>
     public override bool IsAuthenticated {
       get {
-        return _context.Request.IsAuthenticated;
+        return _context.User != null;
       }
     }
 
@@ -257,7 +262,7 @@ namespace WebSocketSharp.Net.WebSockets
     /// Gets the client information (identity, authentication, and security roles).
     /// </summary>
     /// <value>
-    /// A <see cref="IPrincipal"/> that represents the client information.
+    /// A <see cref="IPrincipal"/> instance that represents the client information.
     /// </value>
     public override IPrincipal User {
       get {
